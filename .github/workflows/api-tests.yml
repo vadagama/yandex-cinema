@@ -2,9 +2,20 @@ name: API Tests
 
 on:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
+      - '**'
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - '.github/workflows/api-tests.yml'
   pull_request:
     branches: [ main, master ]
+  workflow_run:
+    workflows: ["Docker Build and Push"]
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       environment:
@@ -24,10 +35,13 @@ jobs:
   api-tests:
     name: Run API Tests
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
 
       - name: Set up Docker Compose
         run: |
@@ -54,11 +68,6 @@ jobs:
       - name: Run API tests
         working-directory: tests/postman
         run: |
-
-          docker compose up -d
-          # Wait for services to be ready
-          echo "Waiting for services to be ready..."
-          sleep 15
           # Build the Docker image
           docker build -t cinemaabyss-api-tests .
           
