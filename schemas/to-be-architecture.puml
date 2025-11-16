@@ -1,0 +1,60 @@
+@startuml CinemaAbyss To-Be Architecture
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Контейнерная диаграмма C4 - CinemaAbyss (To-Be): Микросервисная архитектура с EDA
+
+Person(user, "Пользователь", "Клиент системы КиноБездна")
+
+System_Boundary(cinemaabyss, "Система КиноБездна") {
+    Container(proxy, "Proxy Service\n(API Gateway)", "Go/Node.js/Python, HTTP/REST", "Единая точка входа, маршрутизация запросов, Strangler Fig паттерн")
+    
+    Container_Boundary(monolith_domain, "Монолит (Legacy)") {
+        Container(monolith, "Монолитное приложение", "Go, HTTP/REST", "Управление пользователями, платежами, подписками\n(постепенно мигрирует в микросервисы)")
+    }
+    
+    Container_Boundary(microservices_domain, "Микросервисы") {
+        Container(movies_service, "Movies Service", "Go, HTTP/REST", "Метаданные фильмов, рейтинги, жанры")
+        Container(events_service, "Events Service", "Go/Node.js/Python, HTTP/REST", "Обработка событий системы\n(Producer/Consumer Kafka)")
+    }
+    
+    Container_Boundary(infrastructure, "Инфраструктура") {
+        ContainerDb(postgres, "PostgreSQL", "PostgreSQL 13+", "Хранилище данных:\n- Пользователи\n- Фильмы\n- Платежи\n- Подписки")
+        ContainerQueue(kafka, "Apache Kafka", "Kafka 2.7+", "Event Streaming Platform\nТопики: movie-events, user-events, payment-events")
+        Container(zookeeper, "Zookeeper", "Zookeeper 3.6+", "Координация Kafka кластера")
+        System_Ext(s3, "S3", "Объектное хранилище")
+    }
+}
+
+System_Ext(payment_system, "Платежная система", "Внешняя система")
+System_Ext(recommendation_system, "Рекомендательная система", "Внешняя система")
+System_Ext(cinemas, "Онлайн-кинотеатры", "Внешние системы")
+
+Rel(user, proxy, "Использует", "HTTPS/REST API")
+Rel(proxy, monolith, "Маршрутизирует запросы\n(Users, Payments, Subscriptions)", "HTTP/REST")
+Rel(proxy, movies_service, "Маршрутизирует запросы\n(Movies) с процентным распределением", "HTTP/REST")
+Rel(proxy, events_service, "Маршрутизирует запросы\n(Events)", "HTTP/REST")
+
+Rel(monolith, postgres, "Читает и записывает", "SQL")
+Rel(movies_service, postgres, "Читает и записывает", "SQL")
+Rel(monolith, s3, "Читает и записывает BLOBs", "S3 API")
+Rel(movies_service, s3, "Читает и записывает BLOBs\n(постеры, изображения)", "S3 API")
+
+Rel(events_service, kafka, "Публикует события", "Kafka Producer API")
+Rel(events_service, kafka, "Читает события", "Kafka Consumer API")
+Rel(kafka, zookeeper, "Использует для координации", "Zookeeper Protocol")
+
+Rel(monolith, events_service, "Отправляет события\n(опционально)", "HTTP/REST")
+Rel(movies_service, events_service, "Отправляет события\n(опционально)", "HTTP/REST")
+
+Rel(monolith, payment_system, "Обрабатывает платежи", "HTTPS/REST API")
+Rel(monolith, recommendation_system, "Получает рекомендации", "HTTPS/REST API")
+Rel(movies_service, recommendation_system, "Получает рекомендации\nдля фильмов", "HTTPS/REST API")
+Rel(monolith, cinemas, "Интегрируется с кинотеатрами", "HTTPS/REST API")
+Rel(movies_service, cinemas, "Получает контент\nиз кинотеатров", "HTTPS/REST API")
+
+SHOW_LEGEND()
+
+@enduml
+
