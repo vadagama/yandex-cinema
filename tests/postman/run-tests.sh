@@ -22,7 +22,7 @@ function show_usage {
 }
 
 # Default values
-ENVIRONMENT="local"
+ENVIRONMENT="kubernetes"
 FOLDER=""
 REPORTERS="cli,htmlextra,junit"
 BAIL=false

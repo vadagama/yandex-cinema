@@ -2,9 +2,20 @@ name: API Tests
 
 on:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
+      - '**'
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - '.github/workflows/api-tests.yml'
   pull_request:
     branches: [ main, master ]
+  workflow_run:
+    workflows: ["Docker Build and Push"]
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       environment:
@@ -24,10 +35,13 @@ jobs:
   api-tests:
     name: Run API Tests
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
 
       - name: Set up Docker Compose
         run: |
@@ -36,9 +50,140 @@ jobs:
       - name: Start services with Docker Compose
         run: |
           docker compose up -d
-          # Wait for services to be ready
+      
+      - name: Wait for PostgreSQL to be healthy
+        run: |
+          echo "Waiting for PostgreSQL to be healthy..."
+          
+          # Функция для проверки health check PostgreSQL
+          wait_for_postgres_health() {
+            local max_attempts=60
+            local attempt=1
+            local wait_time=2
+            
+            while [ $attempt -le $max_attempts ]; do
+              local health_status=$(docker inspect --format='{{.State.Health.Status}}' cinemaabyss-postgres 2>/dev/null || echo "starting")
+              
+              if [ "$health_status" = "healthy" ]; then
+                echo "✅ PostgreSQL is healthy!"
+                return 0
+              fi
+              
+              echo "⏳ Attempt $attempt/$max_attempts: PostgreSQL health status: $health_status, waiting ${wait_time}s..."
+              sleep $wait_time
+              attempt=$((attempt + 1))
+            done
+            
+            echo "❌ PostgreSQL failed to become healthy"
+            return 1
+          }
+          
+          # Ждем немного перед проверкой
+          sleep 5
+          wait_for_postgres_health || (echo "PostgreSQL logs:" && docker logs cinemaabyss-postgres --tail 50 && exit 1)
+          
+          # Дополнительное ожидание для полной инициализации БД
+          echo "Waiting for database to be fully ready..."
+          sleep 10
+          
+          # Проверяем, что можем подключиться к PostgreSQL
+          if ! docker exec cinemaabyss-postgres pg_isready -U postgres > /dev/null 2>&1; then
+            echo "❌ PostgreSQL is not accepting connections"
+            docker logs cinemaabyss-postgres --tail 50
+            exit 1
+          fi
+          echo "✅ PostgreSQL is accepting connections"
+      
+      - name: Wait for Kafka and Zookeeper
+        run: |
+          echo "Waiting for Kafka and Zookeeper..."
+          sleep 20
+      
+      - name: Check and restart failed containers
+        run: |
+          echo "Checking container status..."
+          docker compose ps
+          
+          # Проверяем и перезапускаем упавшие контейнеры, которые зависят от PostgreSQL
+          if ! docker ps | grep -q cinemaabyss-monolith; then
+            echo "Monolith container is not running, restarting..."
+            docker compose restart monolith
+            sleep 5
+          fi
+          
+          if ! docker ps | grep -q cinemaabyss-movies-service; then
+            echo "Movies Service container is not running, restarting..."
+            docker compose restart movies-service
+            sleep 5
+          fi
+          
+          if ! docker ps | grep -q cinemaabyss-events-service; then
+            echo "Events Service container is not running, restarting..."
+            docker compose restart events-service
+            sleep 5
+          fi
+          
+          if ! docker ps | grep -q cinemaabyss-proxy-service; then
+            echo "Proxy Service container is not running, restarting..."
+            docker compose restart proxy-service
+            sleep 5
+          fi
+          
+          echo "Final container status:"
+          docker compose ps
+      
+      - name: Wait for services to be ready
+        run: |
           echo "Waiting for services to be ready..."
-          sleep 120
+          
+          # Функция для проверки health check
+          check_health() {
+            local url=$1
+            local service_name=$2
+            local max_attempts=60
+            local attempt=1
+            local wait_time=5
+            
+            echo "Checking $service_name health at $url"
+            
+            while [ $attempt -le $max_attempts ]; do
+              if curl -f -s "$url" > /dev/null 2>&1; then
+                echo "✅ $service_name is ready!"
+                return 0
+              fi
+              
+              echo "⏳ Attempt $attempt/$max_attempts: $service_name not ready yet, waiting ${wait_time}s..."
+              sleep $wait_time
+              attempt=$((attempt + 1))
+            done
+            
+            echo "❌ $service_name failed to become ready after $((max_attempts * wait_time)) seconds"
+            return 1
+          }
+          
+          # Проверяем health checks сервисов
+          check_health "http://localhost:8080/health" "Monolith" || {
+            echo "Monolith logs:"
+            docker logs cinemaabyss-monolith --tail 50
+            exit 1
+          }
+          check_health "http://localhost:8081/api/movies/health" "Movies Service" || {
+            echo "Movies Service logs:"
+            docker logs cinemaabyss-movies-service --tail 50
+            exit 1
+          }
+          check_health "http://localhost:8082/api/events/health" "Events Service" || {
+            echo "Events Service logs:"
+            docker logs cinemaabyss-events-service --tail 50
+            exit 1
+          }
+          check_health "http://localhost:8000/health" "Proxy Service" || {
+            echo "Proxy Service logs:"
+            docker logs cinemaabyss-proxy-service --tail 50
+            exit 1
+          }
+          
+          echo "✅ All services are ready!"
       
       - name: Set up Node.js
         uses: actions/setup-node@v3
@@ -54,11 +199,6 @@ jobs:
       - name: Run API tests
         working-directory: tests/postman
         run: |
-
-          docker compose up -d
-          # Wait for services to be ready
-          echo "Waiting for services to be ready..."
-          sleep 15
           # Build the Docker image
           docker build -t cinemaabyss-api-tests .
           

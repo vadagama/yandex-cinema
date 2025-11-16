@@ -1,0 +1,29 @@
+@startuml CinemaAbyss As-Is Architecture
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+
+title Контейнерная диаграмма C4 - CinemaAbyss (As-Is): Монолитная архитектура
+
+Person(user, "Пользователь", "Клиент системы КиноБездна")
+
+System_Boundary(cinemaabyss, "Система КиноБездна") {
+    Container(monolith, "Монолитное приложение", "Go, HTTP/REST", "Обрабатывает все бизнес-процессы системы")
+    ContainerDb(postgres, "PostgreSQL", "PostgreSQL 13+", "Хранит все данные системы: пользователи, фильмы, платежи, подписки")
+    System_Ext(s3, "S3", "Объектное хранилище")
+}
+
+System_Ext(payment_system, "Платежная система", "Внешняя система")
+System_Ext(recommendation_system, "Рекомендательная система", "Внешние системы")
+System_Ext(cinemas, "Онлайн-кинотеатры", "Внешние системы")
+
+Rel(user, monolith, "Использует", "HTTPS/REST API")
+Rel(monolith, postgres, "Читает и записывает", "SQL")
+Rel(monolith, s3, "Читает и записывает BLOBs", "S3 API")
+Rel(monolith, payment_system, "Обрабатывает платежи", "HTTPS/REST API")
+Rel(monolith, recommendation_system, "Получает рекомендации", "HTTPS/REST API")
+Rel(monolith, cinemas, "Интегрируется с кинотеатрами", "HTTPS/REST API")
+
+SHOW_LEGEND()
+
+@enduml
