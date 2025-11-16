@@ -50,9 +50,51 @@ jobs:
       - name: Start services with Docker Compose
         run: |
           docker compose up -d
-          # Wait for services to be ready
+      
+      - name: Wait for services to be ready
+        run: |
           echo "Waiting for services to be ready..."
-          sleep 120
+          
+          # Функция для проверки health check
+          check_health() {
+            local url=$1
+            local service_name=$2
+            local max_attempts=60
+            local attempt=1
+            local wait_time=5
+            
+            echo "Checking $service_name health at $url"
+            
+            while [ $attempt -le $max_attempts ]; do
+              if curl -f -s "$url" > /dev/null 2>&1; then
+                echo "✅ $service_name is ready!"
+                return 0
+              fi
+              
+              echo "⏳ Attempt $attempt/$max_attempts: $service_name not ready yet, waiting ${wait_time}s..."
+              sleep $wait_time
+              attempt=$((attempt + 1))
+            done
+            
+            echo "❌ $service_name failed to become ready after $((max_attempts * wait_time)) seconds"
+            return 1
+          }
+          
+          # Ждем PostgreSQL
+          echo "Waiting for PostgreSQL..."
+          sleep 10
+          
+          # Ждем Kafka и Zookeeper
+          echo "Waiting for Kafka and Zookeeper..."
+          sleep 20
+          
+          # Проверяем health checks сервисов
+          check_health "http://localhost:8080/health" "Monolith" || exit 1
+          check_health "http://localhost:8081/api/movies/health" "Movies Service" || exit 1
+          check_health "http://localhost:8082/api/events/health" "Events Service" || exit 1
+          check_health "http://localhost:8000/health" "Proxy Service" || exit 1
+          
+          echo "✅ All services are ready!"
       
       - name: Set up Node.js
         uses: actions/setup-node@v3
