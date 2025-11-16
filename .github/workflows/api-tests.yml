@@ -51,13 +51,86 @@ jobs:
         run: |
           docker compose up -d
       
-      - name: Check container status
+      - name: Wait for PostgreSQL to be healthy
         run: |
-          echo "Container status:"
+          echo "Waiting for PostgreSQL to be healthy..."
+          
+          # Функция для проверки health check PostgreSQL
+          wait_for_postgres_health() {
+            local max_attempts=60
+            local attempt=1
+            local wait_time=2
+            
+            while [ $attempt -le $max_attempts ]; do
+              local health_status=$(docker inspect --format='{{.State.Health.Status}}' cinemaabyss-postgres 2>/dev/null || echo "starting")
+              
+              if [ "$health_status" = "healthy" ]; then
+                echo "✅ PostgreSQL is healthy!"
+                return 0
+              fi
+              
+              echo "⏳ Attempt $attempt/$max_attempts: PostgreSQL health status: $health_status, waiting ${wait_time}s..."
+              sleep $wait_time
+              attempt=$((attempt + 1))
+            done
+            
+            echo "❌ PostgreSQL failed to become healthy"
+            return 1
+          }
+          
+          # Ждем немного перед проверкой
+          sleep 5
+          wait_for_postgres_health || (echo "PostgreSQL logs:" && docker logs cinemaabyss-postgres --tail 50 && exit 1)
+          
+          # Дополнительное ожидание для полной инициализации БД
+          echo "Waiting for database to be fully ready..."
+          sleep 10
+          
+          # Проверяем, что можем подключиться к PostgreSQL
+          if ! docker exec cinemaabyss-postgres pg_isready -U postgres > /dev/null 2>&1; then
+            echo "❌ PostgreSQL is not accepting connections"
+            docker logs cinemaabyss-postgres --tail 50
+            exit 1
+          fi
+          echo "✅ PostgreSQL is accepting connections"
+      
+      - name: Wait for Kafka and Zookeeper
+        run: |
+          echo "Waiting for Kafka and Zookeeper..."
+          sleep 20
+      
+      - name: Check and restart failed containers
+        run: |
+          echo "Checking container status..."
           docker compose ps
-          echo ""
-          echo "Checking for failed containers..."
-          docker compose ps | grep -i "exited\|error\|unhealthy" || echo "No failed containers found"
+          
+          # Проверяем и перезапускаем упавшие контейнеры, которые зависят от PostgreSQL
+          if ! docker ps | grep -q cinemaabyss-monolith; then
+            echo "Monolith container is not running, restarting..."
+            docker compose restart monolith
+            sleep 5
+          fi
+          
+          if ! docker ps | grep -q cinemaabyss-movies-service; then
+            echo "Movies Service container is not running, restarting..."
+            docker compose restart movies-service
+            sleep 5
+          fi
+          
+          if ! docker ps | grep -q cinemaabyss-events-service; then
+            echo "Events Service container is not running, restarting..."
+            docker compose restart events-service
+            sleep 5
+          fi
+          
+          if ! docker ps | grep -q cinemaabyss-proxy-service; then
+            echo "Proxy Service container is not running, restarting..."
+            docker compose restart proxy-service
+            sleep 5
+          fi
+          
+          echo "Final container status:"
+          docker compose ps
       
       - name: Wait for services to be ready
         run: |
@@ -87,42 +160,6 @@ jobs:
             echo "❌ $service_name failed to become ready after $((max_attempts * wait_time)) seconds"
             return 1
           }
-          
-          # Функция для проверки готовности PostgreSQL
-          check_postgres() {
-            local max_attempts=30
-            local attempt=1
-            local wait_time=2
-            
-            echo "Checking PostgreSQL readiness..."
-            
-            while [ $attempt -le $max_attempts ]; do
-              if docker exec cinemaabyss-postgres pg_isready -U postgres > /dev/null 2>&1; then
-                echo "✅ PostgreSQL is ready!"
-                return 0
-              fi
-              
-              echo "⏳ Attempt $attempt/$max_attempts: PostgreSQL not ready yet, waiting ${wait_time}s..."
-              sleep $wait_time
-              attempt=$((attempt + 1))
-            done
-            
-            echo "❌ PostgreSQL failed to become ready"
-            return 1
-          }
-          
-          # Ждем и проверяем PostgreSQL
-          echo "Waiting for PostgreSQL to be ready..."
-          sleep 5
-          check_postgres || (echo "PostgreSQL logs:" && docker logs cinemaabyss-postgres --tail 50 && exit 1)
-          
-          # Дополнительное ожидание для инициализации БД
-          echo "Waiting for database initialization..."
-          sleep 15
-          
-          # Ждем Kafka и Zookeeper
-          echo "Waiting for Kafka and Zookeeper..."
-          sleep 20
           
           # Проверяем health checks сервисов
           check_health "http://localhost:8080/health" "Monolith" || {
