@@ -364,7 +364,7 @@ Payment Event:
 
 ### CI/CD
 
-Выполненные изменения:
+#### Выполненные изменения
 1) Доработаны триггеры в секции on:
 - Добавлена поддержка всех веток ('**') в дополнение к main
 - Workflow запускается при отправке коммита в любую ветку (включая новые)
@@ -379,6 +379,15 @@ Payment Event:
 - Запускает сервисы через Docker Compose
 - Выполняет API тесты через Newman
 - Останавливает сервисы после завершения тестов
+
+#### Подтверждение результатов
+1) Docker Build and Push
+
+![github-docker-push.png](images/github-docker-push.png)
+
+2) API Tests
+
+![github-api-tests.png](images/github-api-tests.png)
 
 
 ### Proxy в Kubernetes
